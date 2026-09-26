@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Alert, Button, CircularProgress, IconButton, MenuItem, TextField, Tooltip } from '@mui/material'
-import { ArrowDown, ArrowUp, Beaker, CirclePlus, Play, Route, Rows3 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Beaker, CirclePlus, Copy, Play, Route, Rows3 } from 'lucide-react'
 import { PageHeader } from '@/components/common/PageHeader'
 import { PlanStatusBadge } from '@/components/common/PlanStatusBadge'
 import { useAuth } from '@/hooks/useAuth'
@@ -22,7 +22,8 @@ export function PlansPage() {
   const runAssessment = useAssessmentStore((state) => state.run)
   const [planForm, setPlanForm] = useState(planInitial)
   const [segmentForm, setSegmentForm] = useState(segmentInitial)
-  const [formMode, setFormMode] = useState<'plan' | 'segment' | null>(null)
+  const [formMode, setFormMode] = useState<'plan' | 'segment' | 'reuse' | null>(null)
+  const [reuseTarget, setReuseTarget] = useState(0)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -64,6 +65,16 @@ export function PlansPage() {
     catch (error) { setLocalError(error instanceof Error ? error.message : 'Model run failed') }
     finally { setBusy(false) }
   }
+  const reuseTemplate = async (event: FormEvent) => {
+    event.preventDefault(); if (!selected || !reuseTarget) return
+    setBusy(true); setLocalError(null)
+    try {
+      const copy = await plans.reuse(selected.id, reuseTarget)
+      setFormMode(null); setReuseTarget(0)
+      setNotice(`Template reused as draft ${copy.plan_code} with segments copied in order. Previous assessment results were not carried over — run the model again on this draft.`)
+    } catch (error) { setLocalError(error instanceof Error ? error.message : 'Template reuse failed') }
+    finally { setBusy(false) }
+  }
   const mixTotal = useMemo(() => planForm.breathing_mix.o2 + planForm.breathing_mix.he, [planForm.breathing_mix])
   return (
     <div className="page">
@@ -80,6 +91,11 @@ export function PlansPage() {
         <TextField label="Planned at" type="datetime-local" value={planForm.planned_at} onChange={(event) => setPlanForm({ ...planForm, planned_at: event.target.value })} InputLabelProps={{ shrink: true }} />
         <div className="form-actions"><Button onClick={() => setFormMode(null)}>Cancel</Button><Button type="submit" variant="contained" disabled={busy || mixTotal > 1 || !planForm.diver_profile_id}>Create draft</Button></div>
       </form>}
+      {formMode === 'reuse' && selected && <form className="inline-form" onSubmit={reuseTemplate}>
+        <div className="section-title"><Copy size={19} /><div><strong>Reuse approved template</strong><span>{selected.plan_code} → new draft, segments keep order/depth/time/gas/type</span></div></div>
+        <TextField select label="Target diver profile" value={reuseTarget || ''} onChange={(event) => setReuseTarget(Number(event.target.value))} required>{divers.items.filter((profile) => profile.profile_status === 'active').map((profile) => <MenuItem key={profile.id} value={profile.id}>{profile.profile_code} · {profile.display_name}</MenuItem>)}</TextField>
+        <div className="form-actions"><Button onClick={() => setFormMode(null)}>Cancel</Button><Button type="submit" variant="contained" disabled={busy || !reuseTarget}>Reuse as draft</Button></div>
+      </form>}
       <div className="plan-workbench">
         <section className="record-list plan-index">
           <div className="list-heading"><span>{plans.items.length} PLANS</span><span>VERSION</span></div>
@@ -88,8 +104,8 @@ export function PlansPage() {
         </section>
         <section className="sequence-board">
           {selected ? <>
-            <div className="sequence-head"><div><span className="eyebrow">PLAN INPUT / V{selected.version}</span><h2>{selected.plan_code}</h2><p>{selected.diver_profile_code} · {selected.worksite_pressure_bar.toFixed(2)} bar · O2 {(selected.breathing_mix.o2 * 100).toFixed(0)} / He {(selected.breathing_mix.he * 100).toFixed(0)}</p></div><PlanStatusBadge status={selected.plan_status} /></div>
-            <div className="sequence-toolbar"><div><Rows3 size={17} /><span>{segments.items.length} ordered segments</span></div>{isPlanner && selected.plan_status === 'draft' && <div><Button size="small" startIcon={<CirclePlus size={16} />} onClick={() => { setSegmentForm({ ...segmentInitial, gas_mix: selected.breathing_mix }); setFormMode(formMode === 'segment' ? null : 'segment') }}>Add segment</Button><Button size="small" variant="contained" startIcon={<Play size={16} />} onClick={() => void model()} disabled={busy || segments.items.length === 0}>Run model</Button></div>}</div>
+            <div className="sequence-head"><div><span className="eyebrow">PLAN INPUT / V{selected.version}</span><h2>{selected.plan_code}</h2><p>{selected.diver_profile_code} · {selected.worksite_pressure_bar.toFixed(2)} bar · O2 {(selected.breathing_mix.o2 * 100).toFixed(0)} / He {(selected.breathing_mix.he * 100).toFixed(0)}</p>{selected.source_plan_code && <p><span className="eyebrow">REUSED FROM TEMPLATE</span> {selected.source_plan_code} · source assessment not carried over, re-run the model</p>}</div><PlanStatusBadge status={selected.plan_status} /></div>
+            <div className="sequence-toolbar"><div><Rows3 size={17} /><span>{segments.items.length} ordered segments</span></div>{isPlanner && selected.plan_status === 'approved_for_training' && <div><Button size="small" variant="contained" startIcon={<Copy size={16} />} onClick={() => { setReuseTarget(0); setFormMode(formMode === 'reuse' ? null : 'reuse') }}>Reuse as template</Button></div>}{isPlanner && selected.plan_status === 'draft' && <div><Button size="small" startIcon={<CirclePlus size={16} />} onClick={() => { setSegmentForm({ ...segmentInitial, gas_mix: selected.breathing_mix }); setFormMode(formMode === 'segment' ? null : 'segment') }}>Add segment</Button><Button size="small" variant="contained" startIcon={<Play size={16} />} onClick={() => void model()} disabled={busy || segments.items.length === 0}>Run model</Button></div>}</div>
             {formMode === 'segment' && <form className="segment-form" onSubmit={createSegment}>
               <span className="sequence-token">{String(segments.items.length + 1).padStart(2, '0')}</span>
               <TextField select label="Type" value={segmentForm.segment_type} onChange={(event) => setSegmentForm({ ...segmentForm, segment_type: event.target.value as SegmentType })}>{['descent', 'bottom', 'transit', 'ascent', 'surface'].map((value) => <MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField>

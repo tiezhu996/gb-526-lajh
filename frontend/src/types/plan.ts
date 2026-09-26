@@ -27,6 +27,8 @@ export interface DivePlan {
   worksite_pressure_bar: number
   breathing_mix: GasMix
   plan_status: PlanStatus
+  source_plan_id?: number
+  source_plan_code?: string
   created_by: number
   reviewed_by?: number
   version: number

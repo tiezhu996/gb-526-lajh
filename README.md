@@ -85,6 +85,7 @@ draft -> modeled -> pending_supervisor_review -> approved_for_training -> archiv
 | `GET/POST/PUT` | `/api/v1/divers`、`/divers/:id` | 档案列表、创建、更新 |
 | `GET` | `/api/v1/divers/:id/plans` | 档案关联方案 |
 | `GET/POST` | `/api/v1/plans` | 方案列表与创建 |
+| `POST` | `/api/v1/plans/:id/reuse` | 把已批准训练的方案复用为目标学员的新草稿（段按序复制，评估不搬移；同一模板对同一学员只保留一份未归档副本） |
 | `GET/POST/PUT` | `/api/v1/plans/:id/segments`、`/segments/:id` | 暴露段列表、创建、更新 |
 | `PUT` | `/api/v1/plans/:id/segments/order` | 事务化重排并推进输入版本 |
 | `POST` | `/api/v1/plans/:id/assessments/run` | 校验并创建不可覆盖评估 |

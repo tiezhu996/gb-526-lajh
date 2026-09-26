@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -18,10 +19,34 @@ import (
 type DivePlanService struct {
 	plans    *repository.DivePlanRepository
 	profiles *repository.DiverProfileRepository
+	segments *repository.ExposureSegmentRepository
 }
 
-func NewDivePlanService(plans *repository.DivePlanRepository, profiles *repository.DiverProfileRepository) *DivePlanService {
-	return &DivePlanService{plans: plans, profiles: profiles}
+func NewDivePlanService(plans *repository.DivePlanRepository, profiles *repository.DiverProfileRepository, segments *repository.ExposureSegmentRepository) *DivePlanService {
+	return &DivePlanService{plans: plans, profiles: profiles, segments: segments}
+}
+
+func (s *DivePlanService) response(ctx context.Context, item model.DivePlan) (dto.DivePlanResponse, error) {
+	profile, err := s.profiles.Get(ctx, item.DiverProfileID)
+	if err != nil {
+		return dto.DivePlanResponse{}, err
+	}
+	sourceCode, err := s.sourceCode(ctx, item)
+	if err != nil {
+		return dto.DivePlanResponse{}, err
+	}
+	return dto.NewDivePlanResponse(item, profile.ProfileCode, sourceCode)
+}
+
+func (s *DivePlanService) sourceCode(ctx context.Context, item model.DivePlan) (string, error) {
+	if item.SourcePlanID == nil {
+		return "", nil
+	}
+	source, err := s.plans.Get(ctx, *item.SourcePlanID)
+	if err != nil {
+		return "", err
+	}
+	return source.PlanCode, nil
 }
 
 func (s *DivePlanService) List(ctx context.Context, search, status, profileRaw string, page, size int) ([]dto.DivePlanResponse, int64, error) {
@@ -39,6 +64,7 @@ func (s *DivePlanService) List(ctx context.Context, search, status, profileRaw s
 	}
 	responses := make([]dto.DivePlanResponse, 0, len(items))
 	profileCodes := map[uint]string{}
+	sourceCodes := map[uint]string{}
 	for _, item := range items {
 		code, exists := profileCodes[item.DiverProfileID]
 		if !exists {
@@ -49,7 +75,21 @@ func (s *DivePlanService) List(ctx context.Context, search, status, profileRaw s
 			code = profile.ProfileCode
 			profileCodes[item.DiverProfileID] = code
 		}
-		response, decodeErr := dto.NewDivePlanResponse(item, code)
+		sourceCode := ""
+		if item.SourcePlanID != nil {
+			cached, cachedExists := sourceCodes[*item.SourcePlanID]
+			if cachedExists {
+				sourceCode = cached
+			} else {
+				resolved, sourceErr := s.sourceCode(ctx, item)
+				if sourceErr != nil {
+					return nil, 0, sourceErr
+				}
+				sourceCode = resolved
+				sourceCodes[*item.SourcePlanID] = resolved
+			}
+		}
+		response, decodeErr := dto.NewDivePlanResponse(item, code, sourceCode)
 		if decodeErr != nil {
 			return nil, 0, decodeErr
 		}
@@ -63,11 +103,7 @@ func (s *DivePlanService) Get(ctx context.Context, id uint) (dto.DivePlanRespons
 	if err != nil {
 		return dto.DivePlanResponse{}, err
 	}
-	profile, err := s.profiles.Get(ctx, item.DiverProfileID)
-	if err != nil {
-		return dto.DivePlanResponse{}, err
-	}
-	return dto.NewDivePlanResponse(item, profile.ProfileCode)
+	return s.response(ctx, item)
 }
 
 func (s *DivePlanService) Create(ctx context.Context, req dto.CreateDivePlanRequest, actor audit.Entry) (dto.DivePlanResponse, error) {
@@ -96,7 +132,7 @@ func (s *DivePlanService) Create(ctx context.Context, req dto.CreateDivePlanRequ
 	if err := s.plans.Create(ctx, &item, actor); err != nil {
 		return dto.DivePlanResponse{}, err
 	}
-	return dto.NewDivePlanResponse(item, profile.ProfileCode)
+	return dto.NewDivePlanResponse(item, profile.ProfileCode, "")
 }
 
 func (s *DivePlanService) Archive(ctx context.Context, id uint, req dto.TransitionPlanRequest, actor audit.Entry) (dto.DivePlanResponse, error) {
@@ -121,4 +157,78 @@ func (s *DivePlanService) Archive(ctx context.Context, id uint, req dto.Transiti
 		return dto.DivePlanResponse{}, err
 	}
 	return s.Get(ctx, id)
+}
+
+func (s *DivePlanService) Reuse(ctx context.Context, sourceID uint, req dto.ReuseDivePlanRequest, actor audit.Entry) (dto.DivePlanResponse, error) {
+	source, err := s.plans.Get(ctx, sourceID)
+	if err != nil {
+		return dto.DivePlanResponse{}, err
+	}
+	if source.PlanStatus != constants.PlanApprovedTraining {
+		return dto.DivePlanResponse{}, util.Unprocessable("PLAN_NOT_REUSABLE", "only an approved_for_training plan that is not archived can be reused as a template", nil)
+	}
+	profile, err := s.profiles.Get(ctx, req.DiverProfileID)
+	if err != nil {
+		return dto.DivePlanResponse{}, err
+	}
+	if profile.ProfileStatus != "active" {
+		return dto.DivePlanResponse{}, util.Unprocessable("PROFILE_NOT_ACTIVE", "only an active training profile can receive a reused plan", nil)
+	}
+	if existing, found, findErr := s.plans.FindReuseCopy(ctx, sourceID, req.DiverProfileID); findErr != nil {
+		return dto.DivePlanResponse{}, findErr
+	} else if found {
+		return s.response(ctx, existing)
+	}
+	segments, err := s.segments.ListByPlan(ctx, sourceID)
+	if err != nil {
+		return dto.DivePlanResponse{}, err
+	}
+	copies := make([]model.ExposureSegment, 0, len(segments))
+	for index, segment := range segments {
+		copies = append(copies, model.ExposureSegment{
+			SequenceNo: index + 1, DepthM: segment.DepthM, DurationMin: segment.DurationMin, AscentRateMMin: segment.AscentRateMMin,
+			GasMixJSON: segment.GasMixJSON, SegmentType: segment.SegmentType, Notes: segment.Notes,
+		})
+	}
+	actor.Action = "dive_plan.reuse"
+	actor.EntityType = "dive_plan"
+	actor.BeforeSummary = fmt.Sprintf("source=%s id=%d status=%s", source.PlanCode, source.ID, source.PlanStatus)
+	var item model.DivePlan
+	for attempt := 1; attempt <= 5; attempt++ {
+		item = model.DivePlan{
+			PlanCode: reusePlanCode(source.PlanCode, req.DiverProfileID, attempt), DiverProfileID: req.DiverProfileID,
+			WorksitePressureBar: source.WorksitePressureBar, BreathingMixJSON: source.BreathingMixJSON,
+			PlanStatus: constants.PlanDraft, SourcePlanID: &source.ID, CreatedBy: actor.ActorID, Version: 1, PlannedAt: source.PlannedAt,
+		}
+		actor.AfterSummary = fmt.Sprintf("copy=%s id_source=%d profile=%d segments=%d", item.PlanCode, source.ID, req.DiverProfileID, len(copies))
+		err = s.plans.CreateReuse(ctx, &item, copies, actor)
+		if err == nil {
+			return s.Get(ctx, item.ID)
+		}
+		var appErr *util.AppError
+		if !errors.As(err, &appErr) || appErr.Code != "PLAN_CODE_EXISTS" {
+			return dto.DivePlanResponse{}, err
+		}
+		if existing, found, findErr := s.plans.FindReuseCopy(ctx, sourceID, req.DiverProfileID); findErr != nil {
+			return dto.DivePlanResponse{}, findErr
+		} else if found {
+			return s.response(ctx, existing)
+		}
+	}
+	return dto.DivePlanResponse{}, err
+}
+
+func reusePlanCode(sourceCode string, profileID uint, attempt int) string {
+	suffix := fmt.Sprintf("-R%d", profileID)
+	if attempt > 1 {
+		suffix = fmt.Sprintf("%s-%d", suffix, attempt)
+	}
+	base := strings.TrimSpace(sourceCode)
+	if len(base)+len(suffix) > 40 {
+		base = strings.TrimRight(base[:40-len(suffix)], "-")
+	}
+	if base == "" {
+		base = "R"
+	}
+	return base + suffix
 }

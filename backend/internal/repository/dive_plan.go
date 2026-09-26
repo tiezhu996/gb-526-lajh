@@ -69,6 +69,41 @@ func (r *DivePlanRepository) Create(ctx context.Context, item *model.DivePlan, e
 	return nil
 }
 
+func (r *DivePlanRepository) FindReuseCopy(ctx context.Context, sourcePlanID, diverProfileID uint) (model.DivePlan, bool, error) {
+	var item model.DivePlan
+	err := r.db.WithContext(ctx).Where("source_plan_id = ? AND diver_profile_id = ? AND plan_status <> ?", sourcePlanID, diverProfileID, constants.PlanArchived).Order("id DESC").First(&item).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.DivePlan{}, false, nil
+	}
+	if err != nil {
+		return model.DivePlan{}, false, fmt.Errorf("find reuse copy of plan %d: %w", sourcePlanID, err)
+	}
+	return item, true, nil
+}
+
+func (r *DivePlanRepository) CreateReuse(ctx context.Context, item *model.DivePlan, segments []model.ExposureSegment, entry audit.Entry) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(item).Error; err != nil {
+			if errors.Is(err, gorm.ErrDuplicatedKey) {
+				return util.Conflict("PLAN_CODE_EXISTS", "plan_code already exists", err)
+			}
+			return fmt.Errorf("create reused dive plan: %w", err)
+		}
+		for index := range segments {
+			segments[index].PlanID = item.ID
+			if err := tx.Create(&segments[index]).Error; err != nil {
+				return fmt.Errorf("copy exposure segment %d: %w", segments[index].SequenceNo, err)
+			}
+		}
+		entry.EntityID = item.ID
+		return r.audit.RecordWithDB(ctx, tx, entry)
+	})
+	if err != nil {
+		return fmt.Errorf("reuse dive plan transaction: %w", err)
+	}
+	return nil
+}
+
 func (r *DivePlanRepository) Transition(ctx context.Context, current model.DivePlan, target constants.PlanStatus, reviewerID *uint, entry audit.Entry) error {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		changes := map[string]any{"plan_status": target, "version": gorm.Expr("version + 1")}

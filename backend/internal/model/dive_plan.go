@@ -13,6 +13,7 @@ type DivePlan struct {
 	WorksitePressureBar float64              `gorm:"not null" json:"worksite_pressure_bar"`
 	BreathingMixJSON    string               `gorm:"type:text;not null" json:"breathing_mix_json"`
 	PlanStatus          constants.PlanStatus `gorm:"size:40;not null;index;check:plan_status IN ('draft','modeled','pending_supervisor_review','approved_for_training','archived')" json:"plan_status"`
+	SourcePlanID        *uint                `gorm:"index" json:"source_plan_id"`
 	CreatedBy           uint                 `gorm:"not null;index" json:"created_by"`
 	ReviewedBy          *uint                `gorm:"index" json:"reviewed_by"`
 	Version             uint                 `gorm:"not null;default:1" json:"version"`

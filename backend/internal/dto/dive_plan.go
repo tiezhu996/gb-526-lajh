@@ -29,12 +29,18 @@ type DivePlanResponse struct {
 	WorksitePressureBar float64              `json:"worksite_pressure_bar"`
 	BreathingMix        decompression.GasMix `json:"breathing_mix"`
 	PlanStatus          constants.PlanStatus `json:"plan_status"`
+	SourcePlanID        *uint                `json:"source_plan_id,omitempty"`
+	SourcePlanCode      string               `json:"source_plan_code,omitempty"`
 	CreatedBy           uint                 `json:"created_by"`
 	ReviewedBy          *uint                `json:"reviewed_by"`
 	Version             uint                 `json:"version"`
 	PlannedAt           time.Time            `json:"planned_at"`
 	CreatedAt           time.Time            `json:"created_at"`
 	UpdatedAt           time.Time            `json:"updated_at"`
+}
+
+type ReuseDivePlanRequest struct {
+	DiverProfileID uint `json:"diver_profile_id" binding:"required,min=1"`
 }
 
 type TransitionPlanRequest struct {
@@ -57,7 +63,7 @@ func (r CreateDivePlanRequest) ValidateBusiness() error {
 	return nil
 }
 
-func NewDivePlanResponse(item model.DivePlan, profileCode string) (DivePlanResponse, error) {
+func NewDivePlanResponse(item model.DivePlan, profileCode, sourceCode string) (DivePlanResponse, error) {
 	mix, err := decompression.DecodeGasMix(item.BreathingMixJSON)
 	if err != nil {
 		return DivePlanResponse{}, fmt.Errorf("decode plan %d breathing mix: %w", item.ID, err)
@@ -65,6 +71,7 @@ func NewDivePlanResponse(item model.DivePlan, profileCode string) (DivePlanRespo
 	return DivePlanResponse{
 		ID: item.ID, PlanCode: item.PlanCode, DiverProfileID: item.DiverProfileID, DiverProfileCode: profileCode,
 		WorksitePressureBar: item.WorksitePressureBar, BreathingMix: mix, PlanStatus: item.PlanStatus,
+		SourcePlanID: item.SourcePlanID, SourcePlanCode: sourceCode,
 		CreatedBy: item.CreatedBy, ReviewedBy: item.ReviewedBy, Version: item.Version,
 		PlannedAt: item.PlannedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}, nil
