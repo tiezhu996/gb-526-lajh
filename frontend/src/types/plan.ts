@@ -29,6 +29,8 @@ export interface DivePlan {
   plan_status: PlanStatus
   created_by: number
   reviewed_by?: number
+  source_plan_id?: number | null
+  source_plan_code?: string
   version: number
   planned_at: string
   created_at: string

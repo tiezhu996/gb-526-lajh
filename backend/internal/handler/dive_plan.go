@@ -49,6 +49,27 @@ func (h *DivePlanHandler) Create(c *gin.Context) {
 	util.Created(c, item)
 }
 
+func (h *DivePlanHandler) Reuse(c *gin.Context) {
+	id, ok := util.ParamID(c)
+	if !ok {
+		return
+	}
+	var req dto.ReuseDivePlanRequest
+	if !util.BindJSON(c, &req) {
+		return
+	}
+	item, created, err := h.service.Reuse(c.Request.Context(), id, req, auditActor(c))
+	if err != nil {
+		util.Fail(c, err)
+		return
+	}
+	if !created {
+		util.OK(c, item)
+		return
+	}
+	util.Created(c, item)
+}
+
 func (h *DivePlanHandler) Archive(c *gin.Context) {
 	id, ok := util.ParamID(c)
 	if !ok {

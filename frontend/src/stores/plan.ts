@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { archivePlan, createPlan, getPlan, listPlans } from '@/api/plan'
+import { archivePlan, createPlan, getPlan, listPlans, reusePlan } from '@/api/plan'
 import { errorMessage } from '@/api/client'
 import type { CreateDivePlan, DivePlan } from '@/types/plan'
 
@@ -11,6 +11,7 @@ interface PlanStore {
   load: () => Promise<void>
   select: (id: number) => Promise<void>
   create: (input: CreateDivePlan) => Promise<DivePlan>
+  reuse: (id: number, diverProfileId: number) => Promise<{ plan: DivePlan; created: boolean }>
   archive: (id: number, version: number, reason: string) => Promise<DivePlan>
 }
 
@@ -33,6 +34,12 @@ export const usePlanStore = create<PlanStore>((set, get) => ({
     const item = await createPlan(input)
     set((state) => ({ items: [item, ...state.items], selected: item }))
     return item
+  },
+  reuse: async (id, diverProfileId) => {
+    const item = await reusePlan(id, diverProfileId)
+    const known = get().items.some((plan) => plan.id === item.id)
+    set((state) => ({ items: known ? state.items.map((plan) => plan.id === item.id ? item : plan) : [item, ...state.items], selected: item }))
+    return { plan: item, created: !known }
   },
   archive: async (id, version, reason) => {
     const item = await archivePlan(id, version, reason)

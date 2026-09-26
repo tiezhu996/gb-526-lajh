@@ -35,6 +35,7 @@ docker compose down -v --remove-orphans
 
 - `DiverProfile`：最小化训练资料、资格等级、默认气体假设和版本，不保存诊断性医疗记录。
 - `DivePlan`：工作地点表面压力、呼吸气体、计划时间、输入版本和完整状态流。
+- 计划复用：仅 `approved_for_training` 且未归档的计划可作为模板复用到目标学员名下，新计划从草稿开始、按原顺序复制各段深度/时长/气体/类型（序号从 1 连续），评估结果不复制需重新运行；同一模板对同一学员只保留一份未归档副本，重复复用会回到该副本；复用写入审计并在计划详情标注来源。
 - `ExposureSegment`：同一计划内唯一且连续的序号，严格校验深度、时长、上升速率、气体比例和段间连续性。
 - `DecompressionAssessment`：不可覆盖的输入快照、六舱负荷曲线、风险证据、比较指数、算法版本和假设。
 - 五个业务页：训练档案、计划编排、暴露剖面、评估复核、审计轨迹；图表只消费真实 API 数据。
@@ -85,6 +86,7 @@ draft -> modeled -> pending_supervisor_review -> approved_for_training -> archiv
 | `GET/POST/PUT` | `/api/v1/divers`、`/divers/:id` | 档案列表、创建、更新 |
 | `GET` | `/api/v1/divers/:id/plans` | 档案关联方案 |
 | `GET/POST` | `/api/v1/plans` | 方案列表与创建 |
+| `POST` | `/api/v1/plans/:id/reuse` | 将已批准未归档方案复用为目标学员的草稿副本 |
 | `GET/POST/PUT` | `/api/v1/plans/:id/segments`、`/segments/:id` | 暴露段列表、创建、更新 |
 | `PUT` | `/api/v1/plans/:id/segments/order` | 事务化重排并推进输入版本 |
 | `POST` | `/api/v1/plans/:id/assessments/run` | 校验并创建不可覆盖评估 |

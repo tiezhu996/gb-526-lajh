@@ -95,8 +95,22 @@ func (s *DiverProfileService) Plans(ctx context.Context, id uint, page, size int
 		return nil, 0, err
 	}
 	responses := make([]dto.DivePlanResponse, 0, len(items))
+	sourceCodes := map[uint]string{}
 	for _, item := range items {
-		response, decodeErr := dto.NewDivePlanResponse(item, profile.ProfileCode)
+		sourceCode := ""
+		if item.SourcePlanID != nil {
+			cached, exists := sourceCodes[*item.SourcePlanID]
+			if !exists {
+				source, sourceErr := s.plans.Get(ctx, *item.SourcePlanID)
+				if sourceErr != nil {
+					return nil, 0, sourceErr
+				}
+				cached = source.PlanCode
+				sourceCodes[*item.SourcePlanID] = cached
+			}
+			sourceCode = cached
+		}
+		response, decodeErr := dto.NewDivePlanResponse(item, profile.ProfileCode, sourceCode)
 		if decodeErr != nil {
 			return nil, 0, decodeErr
 		}

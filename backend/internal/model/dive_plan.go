@@ -15,6 +15,7 @@ type DivePlan struct {
 	PlanStatus          constants.PlanStatus `gorm:"size:40;not null;index;check:plan_status IN ('draft','modeled','pending_supervisor_review','approved_for_training','archived')" json:"plan_status"`
 	CreatedBy           uint                 `gorm:"not null;index" json:"created_by"`
 	ReviewedBy          *uint                `gorm:"index" json:"reviewed_by"`
+	SourcePlanID        *uint                `gorm:"index" json:"source_plan_id"`
 	Version             uint                 `gorm:"not null;default:1" json:"version"`
 	PlannedAt           time.Time            `gorm:"not null;index" json:"planned_at"`
 	CreatedAt           time.Time            `json:"created_at"`

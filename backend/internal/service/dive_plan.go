@@ -39,6 +39,7 @@ func (s *DivePlanService) List(ctx context.Context, search, status, profileRaw s
 	}
 	responses := make([]dto.DivePlanResponse, 0, len(items))
 	profileCodes := map[uint]string{}
+	sourceCodes := map[uint]string{}
 	for _, item := range items {
 		code, exists := profileCodes[item.DiverProfileID]
 		if !exists {
@@ -49,13 +50,34 @@ func (s *DivePlanService) List(ctx context.Context, search, status, profileRaw s
 			code = profile.ProfileCode
 			profileCodes[item.DiverProfileID] = code
 		}
-		response, decodeErr := dto.NewDivePlanResponse(item, code)
+		sourceCode, sourceErr := s.sourceCode(ctx, item, sourceCodes)
+		if sourceErr != nil {
+			return nil, 0, sourceErr
+		}
+		response, decodeErr := dto.NewDivePlanResponse(item, code, sourceCode)
 		if decodeErr != nil {
 			return nil, 0, decodeErr
 		}
 		responses = append(responses, response)
 	}
 	return responses, total, nil
+}
+
+// sourceCode resolves the template plan code for a reused plan copy, caching lookups.
+func (s *DivePlanService) sourceCode(ctx context.Context, item model.DivePlan, cache map[uint]string) (string, error) {
+	if item.SourcePlanID == nil {
+		return "", nil
+	}
+	code, exists := cache[*item.SourcePlanID]
+	if !exists {
+		source, err := s.plans.Get(ctx, *item.SourcePlanID)
+		if err != nil {
+			return "", err
+		}
+		code = source.PlanCode
+		cache[*item.SourcePlanID] = code
+	}
+	return code, nil
 }
 
 func (s *DivePlanService) Get(ctx context.Context, id uint) (dto.DivePlanResponse, error) {
@@ -67,7 +89,11 @@ func (s *DivePlanService) Get(ctx context.Context, id uint) (dto.DivePlanRespons
 	if err != nil {
 		return dto.DivePlanResponse{}, err
 	}
-	return dto.NewDivePlanResponse(item, profile.ProfileCode)
+	sourceCode, err := s.sourceCode(ctx, item, map[uint]string{})
+	if err != nil {
+		return dto.DivePlanResponse{}, err
+	}
+	return dto.NewDivePlanResponse(item, profile.ProfileCode, sourceCode)
 }
 
 func (s *DivePlanService) Create(ctx context.Context, req dto.CreateDivePlanRequest, actor audit.Entry) (dto.DivePlanResponse, error) {
@@ -96,7 +122,41 @@ func (s *DivePlanService) Create(ctx context.Context, req dto.CreateDivePlanRequ
 	if err := s.plans.Create(ctx, &item, actor); err != nil {
 		return dto.DivePlanResponse{}, err
 	}
-	return dto.NewDivePlanResponse(item, profile.ProfileCode)
+	return dto.NewDivePlanResponse(item, profile.ProfileCode, "")
+}
+
+// Reuse clones an approved, unarchived template plan into a new draft plan owned
+// by the target training profile. Segments are copied in order with sequence
+// numbers restarting at 1; assessment results are never carried over. When an
+// unarchived copy already exists for the same template and profile, that copy is
+// returned with created=false instead of creating a duplicate.
+func (s *DivePlanService) Reuse(ctx context.Context, id uint, req dto.ReuseDivePlanRequest, actor audit.Entry) (dto.DivePlanResponse, bool, error) {
+	source, err := s.plans.Get(ctx, id)
+	if err != nil {
+		return dto.DivePlanResponse{}, false, err
+	}
+	if source.PlanStatus != constants.PlanApprovedTraining {
+		return dto.DivePlanResponse{}, false, util.Unprocessable("PLAN_NOT_REUSABLE", "only approved_for_training plans that are not archived can be reused as templates", nil)
+	}
+	profile, err := s.profiles.Get(ctx, req.DiverProfileID)
+	if err != nil {
+		return dto.DivePlanResponse{}, false, err
+	}
+	if profile.ProfileStatus != "active" {
+		return dto.DivePlanResponse{}, false, util.Unprocessable("PROFILE_NOT_ACTIVE", "only an active training profile can receive a reused plan", nil)
+	}
+	actor.Action = "dive_plan.reuse"
+	actor.EntityType = "dive_plan"
+	actor.BeforeSummary = fmt.Sprintf("source plan=%d code=%s status=%s", source.ID, source.PlanCode, source.PlanStatus)
+	item, created, err := s.plans.CreateReuseCopy(ctx, source, req.DiverProfileID, actor)
+	if err != nil {
+		return dto.DivePlanResponse{}, false, err
+	}
+	response, err := dto.NewDivePlanResponse(item, profile.ProfileCode, source.PlanCode)
+	if err != nil {
+		return dto.DivePlanResponse{}, false, err
+	}
+	return response, created, nil
 }
 
 func (s *DivePlanService) Archive(ctx context.Context, id uint, req dto.TransitionPlanRequest, actor audit.Entry) (dto.DivePlanResponse, error) {
